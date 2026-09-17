@@ -21,7 +21,9 @@ ALLOWED_HOSTS = ['*']
 
 # All Django apps + our SevaConnect apps
 INSTALLED_APPS = [
+    # Django core — required by rest_framework_simplejwt
     'django.contrib.contenttypes',
+    'django.contrib.auth',
     'django.contrib.staticfiles',
     # Third-party
     'rest_framework',
