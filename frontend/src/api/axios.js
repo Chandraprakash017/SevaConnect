@@ -7,9 +7,11 @@
 
 import axios from 'axios'
 
+const baseURL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api'
+
 // Django backend runs on port 8000
 const API = axios.create({
-  baseURL: 'http://localhost:8000/api',
+  baseURL,
 })
 
 // Attach JWT token to every request automatically
@@ -34,7 +36,7 @@ API.interceptors.response.use(
 
       if (refreshToken) {
         try {
-          const res = await axios.post('http://localhost:8000/api/auth/refresh/', {
+          const res = await axios.post(`${baseURL}/auth/refresh/`, {
             refresh: refreshToken,
           })
           const newAccess = res.data.access
