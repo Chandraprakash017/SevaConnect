@@ -1,34 +1,40 @@
 """
-SevaConnect URL Configuration
+SevaConnect URL Configuration — All API routes.
 
-All API routes are grouped by app with the /api/ prefix.
+Each app is mounted under /api/ with a logical prefix.
 """
 
 from django.urls import path, include
 
 urlpatterns = [
-    # Health check - useful to verify server is running
+    # Health check
     path('api/health/', include('common.urls')),
 
-    # Authentication (register, login, refresh token)
+    # Authentication (register, login, token refresh, profile)
     path('api/auth/', include('accounts.urls')),
 
-    # Departments and Services (browse)
+    # Service catalog (departments and services)
     path('api/', include('departments.urls')),
     path('api/', include('services.urls')),
 
-    # Bookings (create, view, update status)
+    # Parts catalog
+    path('api/', include('parts.urls')),
+
+    # Bookings — core flow
     path('api/', include('bookings.urls')),
 
-    # Technician actions (profile, job accept/reject)
+    # Technician management
     path('api/', include('technicians.urls')),
 
-    # AI Assistant (problem diagnosis)
+    # AI problem assistant
     path('api/', include('ai_assistant.urls')),
 
-    # Payments
+    # Payments (Razorpay)
     path('api/', include('payments.urls')),
 
     # Reviews
     path('api/', include('reviews.urls')),
+
+    # Invoices
+    path('api/', include('invoices.urls')),
 ]

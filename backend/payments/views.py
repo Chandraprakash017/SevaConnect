@@ -55,7 +55,8 @@ def create_payment_order(request, booking_id):
         return Response({"error": "This booking has already been paid."}, status=status.HTTP_400_BAD_REQUEST)
 
     # Razorpay amount is in paise (INR × 100)
-    amount_paise = int(booking.get('base_price', 0) * 100)
+    amount = booking.get('final_price') or booking.get('estimated_min') or 0
+    amount_paise = int(float(amount) * 100)
     if amount_paise <= 0:
         return Response({"error": "Booking has no valid price."}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -163,5 +164,5 @@ def get_payment_status(request, booking_id):
         "razorpay_order_id": booking.get('razorpay_order_id'),
         "razorpay_payment_id": booking.get('razorpay_payment_id'),
         "paid_at": booking.get('paid_at').isoformat() if booking.get('paid_at') else None,
-        "amount": booking.get('base_price', 0),
+        "amount": booking.get('final_price') or booking.get('estimated_min') or 0,
     })

@@ -34,10 +34,12 @@ INSTALLED_APPS = [
     'accounts',
     'departments',
     'services',
+    'parts',
     'bookings',
     'technicians',
     'payments',
     'reviews',
+    'invoices',
     'ai_assistant',
 ]
 

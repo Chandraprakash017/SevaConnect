@@ -36,3 +36,9 @@ media/
 .coverage
 htmlcov/
 .pytest_cache/
+
+# Node.js (frontend)
+node_modules/
+dist/
+.env.local
+

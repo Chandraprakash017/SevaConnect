@@ -1,158 +1,162 @@
 """
 AI Assistant views for SevaConnect.
 
-Uses Google Gemini to diagnose appliance/home problems described by the user
-and recommend the appropriate service category.
+Two-step AI diagnosis flow:
+  Step 1: Customer describes problem → AI returns initial assessment + follow-up questions
+  Step 2: Customer answers questions → AI gives refined diagnosis
 
-This is a core feature of SevaConnect — users describe their problem in plain
-language and the AI helps them find the right service.
+The diagnosis is stored in the ai_diagnosis collection and linked to bookings.
 """
 
-from django.conf import settings
+from datetime import datetime
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
 
-try:
-    from google import genai
-    from google.genai import types as genai_types
-    GENAI_SDK = "new"
-except ImportError:
-    try:
-        import google.generativeai as genai
-        GENAI_SDK = "old"
-    except ImportError:
-        genai = None
-        GENAI_SDK = None
-
-
-DIAGNOSIS_SYSTEM_PROMPT = """You are SevaConnect's AI assistant — a helpful home services expert.
-
-When a user describes a problem with their home appliance, vehicle, or any household issue,
-you should:
-1. Identify the most likely cause(s) of the problem
-2. Estimate the severity (low / medium / high)
-3. Recommend which service category they need (e.g., Electrical, Plumbing, AC Repair, Carpentry, Vehicle, etc.)
-4. Provide 2-3 practical first-aid steps the user can try before the technician arrives
-5. Mention any safety warnings if applicable
-
-Be concise, friendly, and practical. Format your response in clear sections.
-Always end with: "Book a verified SevaConnect technician to fix this properly."
-"""
-
-
-def _call_gemini(prompt, system_prompt=None, history=None):
-    """
-    Unified helper to call Gemini using whichever SDK is available.
-    Returns the response text string.
-    """
-    if not settings.GEMINI_API_KEY:
-        raise ValueError("GEMINI_API_KEY is not configured.")
-
-    if GENAI_SDK == "new":
-        client = genai.Client(api_key=settings.GEMINI_API_KEY)
-
-        contents = []
-        if history:
-            for h in history:
-                role = h.get("role", "user")
-                parts_text = h.get("parts", [""])
-                contents.append(
-                    genai_types.Content(role=role, parts=[genai_types.Part(text=parts_text[0])])
-                )
-        contents.append(
-            genai_types.Content(role="user", parts=[genai_types.Part(text=prompt)])
-        )
-
-        config = genai_types.GenerateContentConfig(
-            system_instruction=system_prompt,
-            max_output_tokens=600,
-            temperature=0.4,
-        )
-
-        response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=contents,
-            config=config,
-        )
-        return response.text
-
-    elif GENAI_SDK == "old":
-        import warnings
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            genai.configure(api_key=settings.GEMINI_API_KEY)
-            model = genai.GenerativeModel(
-                model_name="gemini-1.5-flash",
-                system_instruction=system_prompt,
-            )
-            if history:
-                chat = model.start_chat(history=history)
-                response = chat.send_message(prompt)
-            else:
-                response = model.generate_content(prompt)
-            return response.text
-
-    else:
-        raise ImportError("No Gemini SDK found. Install: pip install google-genai")
+from common.db import db
+from common.utils import serialize_doc, str_to_objectid
+from ai_assistant.ai_service import get_initial_diagnosis, get_followup_diagnosis, get_chat_response
 
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def diagnose(request):
     """
-    AI diagnosis endpoint.
+    Step 1: Customer describes their problem.
 
-    Accepts a problem description from the user and returns AI-generated
-    diagnosis, recommended service, and first-aid steps.
+    The AI returns an initial assessment and 2-3 follow-up questions
+    to better understand the issue.
 
-    Expected body:
+    Request body:
     {
-        "problem": "My AC is making a loud rattling noise and not cooling"
+        "problem": "My bike is not starting, self makes a clicking sound"
     }
+
+    Response includes a session_id that must be passed to /followup/ endpoint.
     """
     problem = request.data.get('problem', '').strip()
 
     if not problem:
-        return Response({"error": "'problem' description is required."}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"error": "'problem' is required."}, status=status.HTTP_400_BAD_REQUEST)
 
     if len(problem) > 1000:
-        return Response({"error": "Problem description is too long (max 1000 chars)."}, status=status.HTTP_400_BAD_REQUEST)
-
-    if not settings.GEMINI_API_KEY:
-        return Response(
-            {"error": "AI service is not configured. Please set GEMINI_API_KEY in .env"},
-            status=status.HTTP_503_SERVICE_UNAVAILABLE
-        )
+        return Response({"error": "Problem description too long (max 1000 characters)."}, status=status.HTTP_400_BAD_REQUEST)
 
     try:
-        ai_response = _call_gemini(problem, system_prompt=DIAGNOSIS_SYSTEM_PROMPT)
-    except Exception as e:
+        # Call Gemini AI to get initial diagnosis
+        ai_result = get_initial_diagnosis(problem)
+    except ValueError as e:
+        return Response({"error": str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+    except Exception:
         return Response(
-            {"error": f"AI service error: {str(e)}"},
-            status=status.HTTP_502_BAD_GATEWAY
+            {"error": "Unable to process the problem right now. Please try again."},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
+    # Save the diagnosis session to MongoDB so we can continue in step 2
+    diagnosis_doc = {
+        "problem_description": problem,
+        "initial_diagnosis": ai_result,
+        "follow_up_answers": [],
+        "final_diagnosis": None,
+        "status": "pending_followup",    # pending_followup | complete
+        "created_at": datetime.utcnow(),
+    }
+
+    result = db.ai_diagnosis.insert_one(diagnosis_doc)
+    session_id = str(result.inserted_id)
+
     return Response({
+        "session_id": session_id,
         "problem": problem,
-        "diagnosis": ai_response,
+        "initial_diagnosis": ai_result,
     })
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def followup(request):
+    """
+    Step 2: Customer submits answers to the follow-up questions.
+
+    The AI uses the original problem + answers to give a more specific diagnosis.
+
+    Request body:
+    {
+        "session_id": "<id from step 1>",
+        "answers": [
+            {"question": "Does the horn work?", "answer": "Yes"},
+            {"question": "Does the self make any sound?", "answer": "Yes, clicking sound"},
+            {"question": "Did this happen suddenly?", "answer": "Yes"}
+        ]
+    }
+    """
+    session_id = request.data.get('session_id', '').strip()
+    answers = request.data.get('answers', [])
+
+    if not session_id:
+        return Response({"error": "'session_id' is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+    if not answers:
+        return Response({"error": "'answers' list is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Find the diagnosis session
+    session = db.ai_diagnosis.find_one({"_id": str_to_objectid(session_id)})
+    if not session:
+        return Response({"error": "Diagnosis session not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    problem = session['problem_description']
+
+    try:
+        # Get refined diagnosis based on the answers
+        final_diagnosis = get_followup_diagnosis(problem, answers)
+    except ValueError as e:
+        return Response({"error": str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+    except Exception:
+        return Response(
+            {"error": "Unable to process the answers right now. Please try again."},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+    # Update the session with the final diagnosis
+    db.ai_diagnosis.update_one(
+        {"_id": str_to_objectid(session_id)},
+        {"$set": {
+            "follow_up_answers": answers,
+            "final_diagnosis": final_diagnosis,
+            "status": "complete",
+            "completed_at": datetime.utcnow(),
+        }}
+    )
+
+    return Response({
+        "session_id": session_id,
+        "problem": problem,
+        "final_diagnosis": final_diagnosis,
+    })
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def get_diagnosis_session(request, session_id):
+    """Get a stored AI diagnosis session (used when creating a booking)."""
+    session = db.ai_diagnosis.find_one({"_id": str_to_objectid(session_id)})
+    if not session:
+        return Response({"error": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
+    return Response(serialize_doc(session))
 
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def chat(request):
     """
-    Multi-turn AI chat for more conversational problem solving.
+    General AI chat assistant for the help page.
 
-    Expected body:
+    Request body:
     {
-        "message": "The rattling started after I cleaned the filter",
-        "history": [
-            {"role": "user", "parts": ["My AC is making noise"]},
-            {"role": "model", "parts": ["It could be a loose component..."]}
-        ]
+        "message": "What services do you offer for AC repair?",
+        "history": [...]  (optional - previous messages for context)
     }
     """
     message = request.data.get('message', '').strip()
@@ -161,20 +165,17 @@ def chat(request):
     if not message:
         return Response({"error": "'message' is required."}, status=status.HTTP_400_BAD_REQUEST)
 
-    if not settings.GEMINI_API_KEY:
-        return Response(
-            {"error": "AI service is not configured."},
-            status=status.HTTP_503_SERVICE_UNAVAILABLE
-        )
-
     try:
-        reply = _call_gemini(message, system_prompt=DIAGNOSIS_SYSTEM_PROMPT, history=history)
-    except Exception as e:
+        reply = get_chat_response(message, history)
+    except ValueError as e:
+        return Response({"error": str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+    except Exception:
         return Response(
-            {"error": f"AI service error: {str(e)}"},
-            status=status.HTTP_502_BAD_GATEWAY
+            {"error": "Chat service unavailable right now."},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
+    # Add this turn to the history for the frontend to track
     updated_history = [
         *history,
         {"role": "user", "parts": [message]},
