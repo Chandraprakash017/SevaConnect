@@ -43,10 +43,13 @@ export default function AIAssistant() {
 
   const handleFollowup = async () => {
     const questions = initialDiagnosis?.follow_up_questions || []
-    const answerList = questions.map((q) => ({
-      question: q,
-      answer: answers[q] || 'Not answered',
-    }))
+    const answerList = questions.map((item) => {
+      const question = typeof item === 'string' ? item : item.question
+      return {
+        question,
+        answer: answers[question] || 'Not answered',
+      }
+    })
 
     setError('')
     setLoading(true)
@@ -179,18 +182,21 @@ export default function AIAssistant() {
                   Help us narrow down the problem by answering these:
                 </p>
                 <div className="space-y-4">
-                  {initialDiagnosis.follow_up_questions.map((q, i) => (
-                    <div key={i}>
-                      <label className="label">{q}</label>
+                  {initialDiagnosis.follow_up_questions.map((item, i) => {
+                    const question = typeof item === 'string' ? item : item.question
+                    return (
+                    <div key={item.id || i}>
+                      <label className="label">{question}</label>
                       <input
                         type="text"
                         className="input-field"
                         placeholder="Type your answer..."
-                        value={answers[q] || ''}
-                        onChange={(e) => setAnswers({ ...answers, [q]: e.target.value })}
+                        value={answers[question] || ''}
+                        onChange={(e) => setAnswers({ ...answers, [question]: e.target.value })}
                       />
                     </div>
-                  ))}
+                    )
+                  })}
                 </div>
                 <div className="flex items-center justify-between mt-6">
                   <button onClick={() => { setStep(3) }} className="btn-secondary btn-sm">

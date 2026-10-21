@@ -37,18 +37,54 @@ def _extract_json(text):
         text = re.sub(r'^```[a-z]*\n?', '', text)
         text = re.sub(r'\n?```$', '', text)
 
-    # Try to parse the JSON
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        # If JSON parsing fails, try to find JSON within the text
-        json_match = re.search(r'\{.*\}', text, re.DOTALL)
-        if json_match:
-            try:
-                return json.loads(json_match.group())
-            except json.JSONDecodeError:
-                return None
+    decoder = json.JSONDecoder()
+    for match in re.finditer(r'\{', text):
+        try:
+            result, _ = decoder.raw_decode(text[match.start():])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(result, dict):
+            return result
     return None
+
+
+def _generate_content(client, sdk_version, prompt_text, system_instruction, max_output_tokens, temperature, structured=True):
+    """Generate a response with a fallback model when the primary is unavailable."""
+    models = [settings.GEMINI_MODEL]
+    fallback_model = getattr(settings, 'GEMINI_FALLBACK_MODEL', '')
+    if fallback_model and fallback_model not in models:
+        models.append(fallback_model)
+
+    last_error = None
+    for model_name in models:
+        try:
+            if sdk_version == "new":
+                from google.genai import types as genai_types
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt_text,
+                    config=genai_types.GenerateContentConfig(
+                        system_instruction=system_instruction,
+                        max_output_tokens=max_output_tokens,
+                        temperature=temperature,
+                        response_mime_type="application/json" if structured else None,
+                    )
+                )
+            else:
+                import warnings
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    model = client.GenerativeModel(
+                        model_name=model_name,
+                        system_instruction=system_instruction,
+                        generation_config={"response_mime_type": "application/json"} if structured else None,
+                    )
+                    response = model.generate_content(prompt_text)
+            return response.text
+        except Exception as error:
+            last_error = error
+
+    raise last_error
 
 
 def get_initial_diagnosis(problem_description):
@@ -73,28 +109,9 @@ def get_initial_diagnosis(problem_description):
 
     client, sdk_version = _get_gemini_client()
 
-    if sdk_version == "new":
-        from google.genai import types as genai_types
-        response = client.models.generate_content(
-            model=settings.GEMINI_MODEL,
-            contents=prompt_text,
-            config=genai_types.GenerateContentConfig(
-                system_instruction=INITIAL_DIAGNOSIS_PROMPT,
-                max_output_tokens=800,
-                temperature=0.3,   # Low temperature for consistent structured output
-            )
-        )
-        response_text = response.text
-    else:
-        import warnings
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            model = client.GenerativeModel(
-                model_name=settings.GEMINI_MODEL,
-                system_instruction=INITIAL_DIAGNOSIS_PROMPT,
-            )
-            response = model.generate_content(prompt_text)
-            response_text = response.text
+    response_text = _generate_content(
+        client, sdk_version, prompt_text, INITIAL_DIAGNOSIS_PROMPT, 1200, 0.3
+    )
 
     # Parse the JSON response
     result = _extract_json(response_text)
@@ -124,28 +141,9 @@ def get_followup_diagnosis(problem_description, questions_and_answers):
 
     client, sdk_version = _get_gemini_client()
 
-    if sdk_version == "new":
-        from google.genai import types as genai_types
-        response = client.models.generate_content(
-            model=settings.GEMINI_MODEL,
-            contents=prompt_text,
-            config=genai_types.GenerateContentConfig(
-                system_instruction=FOLLOWUP_DIAGNOSIS_PROMPT,
-                max_output_tokens=800,
-                temperature=0.3,
-            )
-        )
-        response_text = response.text
-    else:
-        import warnings
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            model = client.GenerativeModel(
-                model_name=settings.GEMINI_MODEL,
-                system_instruction=FOLLOWUP_DIAGNOSIS_PROMPT,
-            )
-            response = model.generate_content(prompt_text)
-            response_text = response.text
+    response_text = _generate_content(
+        client, sdk_version, prompt_text, FOLLOWUP_DIAGNOSIS_PROMPT, 1600, 0.3
+    )
 
     result = _extract_json(response_text)
 
@@ -179,16 +177,9 @@ def get_chat_response(message, history=None):
         contents.append(
             genai_types.Content(role="user", parts=[genai_types.Part(text=message)])
         )
-        response = client.models.generate_content(
-            model=settings.GEMINI_MODEL,
-            contents=contents,
-            config=genai_types.GenerateContentConfig(
-                system_instruction=CHAT_SYSTEM_PROMPT,
-                max_output_tokens=500,
-                temperature=0.5,
-            )
+        return _generate_content(
+            client, sdk_version, contents, CHAT_SYSTEM_PROMPT, 800, 0.5, structured=False
         )
-        return response.text
     else:
         import warnings
         with warnings.catch_warnings():

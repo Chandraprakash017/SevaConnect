@@ -13,6 +13,7 @@ Run the Django application from `backend` with `gunicorn config.wsgi:application
 - `MONGO_URI`: the production MongoDB connection string.
 - `GEMINI_API_KEY`: a valid Google AI Studio API key; AI diagnosis and chat return an unavailable response if it is missing.
 - `GEMINI_MODEL`: optional; defaults to `gemini-3.6-flash`.
+- `GEMINI_FALLBACK_MODEL`: optional; defaults to `gemini-3.5-flash-lite` and is tried if the primary model is unavailable.
 - `CORS_ALLOWED_ORIGINS`: comma-separated frontend origins, including the scheme and no trailing slash, when frontend and backend use separate domains.
 
 Keep API keys and secrets in the hosting provider's environment settings. Never commit `.env` files or expose the Gemini key through a `VITE_` variable.
