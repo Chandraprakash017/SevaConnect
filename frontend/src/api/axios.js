@@ -7,7 +7,7 @@
 
 import axios from 'axios'
 
-const baseURL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api'
+const baseURL = import.meta.env.VITE_API_URL || '/api'
 
 // Django backend runs on port 8000
 const API = axios.create({

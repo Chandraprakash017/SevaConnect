@@ -76,7 +76,7 @@ def get_initial_diagnosis(problem_description):
     if sdk_version == "new":
         from google.genai import types as genai_types
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model=settings.GEMINI_MODEL,
             contents=prompt_text,
             config=genai_types.GenerateContentConfig(
                 system_instruction=INITIAL_DIAGNOSIS_PROMPT,
@@ -90,7 +90,7 @@ def get_initial_diagnosis(problem_description):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             model = client.GenerativeModel(
-                model_name="gemini-1.5-flash",
+                model_name=settings.GEMINI_MODEL,
                 system_instruction=INITIAL_DIAGNOSIS_PROMPT,
             )
             response = model.generate_content(prompt_text)
@@ -127,7 +127,7 @@ def get_followup_diagnosis(problem_description, questions_and_answers):
     if sdk_version == "new":
         from google.genai import types as genai_types
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model=settings.GEMINI_MODEL,
             contents=prompt_text,
             config=genai_types.GenerateContentConfig(
                 system_instruction=FOLLOWUP_DIAGNOSIS_PROMPT,
@@ -141,7 +141,7 @@ def get_followup_diagnosis(problem_description, questions_and_answers):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             model = client.GenerativeModel(
-                model_name="gemini-1.5-flash",
+                model_name=settings.GEMINI_MODEL,
                 system_instruction=FOLLOWUP_DIAGNOSIS_PROMPT,
             )
             response = model.generate_content(prompt_text)
@@ -180,7 +180,7 @@ def get_chat_response(message, history=None):
             genai_types.Content(role="user", parts=[genai_types.Part(text=message)])
         )
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model=settings.GEMINI_MODEL,
             contents=contents,
             config=genai_types.GenerateContentConfig(
                 system_instruction=CHAT_SYSTEM_PROMPT,
@@ -194,7 +194,7 @@ def get_chat_response(message, history=None):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             model = client.GenerativeModel(
-                model_name="gemini-1.5-flash",
+                model_name=settings.GEMINI_MODEL,
                 system_instruction=CHAT_SYSTEM_PROMPT,
             )
             if history:

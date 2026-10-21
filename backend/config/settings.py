@@ -121,6 +121,7 @@ MONGO_URI = os.getenv('MONGO_URI', 'mongodb://localhost:27017/sevaconnect')
 
 # Google Gemini API key - NEVER expose this in the frontend
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
+GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-3.6-flash')
 
 # Razorpay payment keys
 RAZORPAY_KEY_ID = os.getenv('RAZORPAY_KEY_ID', '')
