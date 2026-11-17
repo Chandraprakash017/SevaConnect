@@ -4,6 +4,10 @@
 
 Build and serve the `frontend` directory with the hosting provider's static-site service. Set `VITE_API_URL` to the backend origin plus `/api` when the frontend and backend use separate domains, for example `https://api.example.com/api`. For a same-origin deployment, leave it unset so requests use `/api`.
 
+Set `VITE_GOOGLE_MAPS_API_KEY` in the frontend build environment to enable the live tracking map and traffic-aware arrival estimate. Enable billing and the Google Maps JavaScript API and Directions API in Google Cloud. Restrict the browser key to the deployed frontend's HTTPS referrers and only the APIs this app uses. This key is delivered to browsers, so protect it with those restrictions; do not use a server-side key as the browser key.
+
+Customers can share a GPS pin while creating a booking. When a technician marks a job as on the way, they must start live location sharing from the job page and allow browser location access. Tracking requires HTTPS, an enabled device location service, network access, and the technician's job page to remain open. The customer booking page refreshes the technician's location every 15 seconds, while the route/traffic estimate is refreshed at most once per minute. Bookings without a customer GPS pin can still be serviced, but their map route and arrival estimate cannot be calculated.
+
 ## Backend
 
 Run the Django application from `backend` with `gunicorn config.wsgi:application`. Configure these environment variables in the backend hosting provider:
@@ -17,6 +21,17 @@ Run the Django application from `backend` with `gunicorn config.wsgi:application
 - `CORS_ALLOWED_ORIGINS`: comma-separated frontend origins, including the scheme and no trailing slash, when frontend and backend use separate domains.
 
 Keep API keys and secrets in the hosting provider's environment settings. Never commit `.env` files or expose the Gemini key through a `VITE_` variable.
+
+## Administrator access
+
+Administrator accounts cannot be created through public registration. Create the first administrator from a trusted backend environment after configuring MongoDB:
+
+```sh
+cd backend
+python manage.py create_admin admin@example.com
+```
+
+The command prompts for the administrator's name, phone number, and a password (minimum 12 characters) without placing the password in shell history. Sign in at `/admin/login`. The same account is also accepted by the regular login endpoint and is redirected to the admin dashboard.
 
 ## Verify
 

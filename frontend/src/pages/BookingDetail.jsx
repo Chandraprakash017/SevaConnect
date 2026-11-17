@@ -9,9 +9,10 @@ import { useAuth } from '../context/AuthContext'
 import LoadingSpinner from '../components/LoadingSpinner'
 import StatusBadge from '../components/StatusBadge'
 import StarRating from '../components/StarRating'
+import LiveTrackingMap from '../components/LiveTrackingMap'
 import {
   MapPin, Calendar, Clock, Phone, User, FileText,
-  CheckCircle, XCircle, IndianRupee, ArrowLeft, Send, MessageSquare
+  CheckCircle, XCircle, IndianRupee, ArrowLeft, Send, MessageSquare, Clock3
 } from 'lucide-react'
 
 const STATUS_ORDER = ['requested', 'assigned', 'on_way', 'inspection', 'waiting_approval', 'in_progress', 'completed']
@@ -27,6 +28,8 @@ export default function BookingDetail() {
   const [existingReview, setExistingReview] = useState(null)
   const [reviewSubmitting, setReviewSubmitting] = useState(false)
   const [error, setError] = useState('')
+  const [trackingError, setTrackingError] = useState('')
+  const [eta, setEta] = useState(null)
 
   const fetchBooking = () => {
     API.get(`/bookings/${id}/`)
@@ -42,6 +45,21 @@ export default function BookingDetail() {
       .then((res) => { if (res.data.reviewed) setExistingReview(res.data.review) })
       .catch(() => {})
   }, [id])
+
+  useEffect(() => {
+    if (user?.role !== 'customer' || booking?.status !== 'on_way') return undefined
+
+    const intervalId = window.setInterval(() => {
+      API.get(`/bookings/${id}/`)
+        .then((res) => {
+          setBooking(res.data)
+          setTrackingError('')
+        })
+        .catch(() => setTrackingError('Live tracking could not refresh. Check your connection.'))
+    }, 15000)
+
+    return () => window.clearInterval(intervalId)
+  }, [booking?.status, id, user?.role])
 
   const handleStatusUpdate = async (newStatus) => {
     setActionLoading(true)
@@ -79,6 +97,9 @@ export default function BookingDetail() {
 
   const currentIdx = STATUS_ORDER.indexOf(booking.status)
   const isCancelled = booking.status === 'cancelled'
+  const etaMinutes = eta ? Math.max(0, Math.ceil((eta.arrivalTimestamp - Date.now()) / 60000)) : null
+  const hasFreshTechnicianLocation = booking.technician_location?.updated_at
+    && Date.now() - new Date(booking.technician_location.updated_at).getTime() < 45000
 
   return (
     <div className="relative">
@@ -126,6 +147,65 @@ export default function BookingDetail() {
             </div>
           </div>
         </div>
+
+        {user?.role === 'customer' && booking.status === 'on_way' && (
+          <div className="glass-card-static mb-6 p-6">
+            <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <h3 className="flex items-center gap-2 font-semibold text-white">
+                  <span className="relative flex h-2.5 w-2.5">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                    <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                  </span>
+                  Technician on the way
+                </h3>
+                <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
+                  {booking.technician_location?.updated_at
+                    ? (() => {
+                      const ageSeconds = Math.max(0, Math.floor((Date.now() - new Date(booking.technician_location.updated_at).getTime()) / 1000))
+                      return ageSeconds < 45
+                        ? `Live location updated ${ageSeconds < 5 ? 'just now' : `${ageSeconds} seconds ago`}.`
+                        : `Last location update was ${Math.floor(ageSeconds / 60)} min ago. Waiting for a fresh GPS update.`
+                    })()
+                    : 'Waiting for the technician to start sharing their GPS location.'}
+                </p>
+                {booking.technician_location?.accuracy_m != null && (
+                  <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                    GPS accuracy ±{Math.round(booking.technician_location.accuracy_m)} m
+                  </p>
+                )}
+              </div>
+              <div className="min-w-[145px] rounded-xl border border-emerald-400/20 bg-emerald-500/5 px-4 py-3 text-right">
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Estimated arrival</p>
+                <p className="mt-1 text-xl font-bold text-emerald-300">
+                  {etaMinutes === null
+                    ? booking.technician_location && booking.service_location ? 'Calculating…' : 'Waiting for GPS'
+                    : etaMinutes === 0 ? 'Arriving now' : `~${etaMinutes} min`}
+                </p>
+                {eta?.arrivalTime && <p className="mt-0.5 text-xs text-emerald-200">Around {eta.arrivalTime}</p>}
+              </div>
+            </div>
+
+            {!booking.service_location && (
+              <div className="mb-4 rounded-lg border border-amber-400/20 bg-amber-500/5 p-3 text-sm text-amber-200">
+                No GPS pin was included with this booking, so a route and arrival estimate cannot be calculated. The address remains available to the technician.
+              </div>
+            )}
+
+            <LiveTrackingMap
+              destination={booking.service_location}
+              technicianLocation={hasFreshTechnicianLocation ? booking.technician_location : null}
+              onEtaChange={setEta}
+            />
+            {trackingError && (
+              <p className="mt-3 text-sm text-amber-300" role="status">{trackingError}</p>
+            )}
+            <p className="mt-3 flex items-start gap-1.5 text-xs" style={{ color: 'var(--text-muted)' }}>
+              <Clock3 size={13} className="mt-0.5 shrink-0" />
+              Arrival time is an estimate based on current route and traffic. It can change as conditions update.
+            </p>
+          </div>
+        )}
 
         {/* Status Timeline */}
         <div className="glass-card-static p-6 mb-6">

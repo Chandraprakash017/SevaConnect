@@ -24,6 +24,7 @@ export default function App() {
           {/* Public */}
           <Route path="/" element={<Home />} />
           <Route path="/login" element={<Login />} />
+          <Route path="/admin/login" element={<Login adminOnly />} />
           <Route path="/register" element={<Register />} />
           <Route path="/services" element={<Services />} />
           <Route path="/ai-assist" element={<AIAssistant />} />

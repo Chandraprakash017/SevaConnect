@@ -15,17 +15,27 @@ export default function AdminDashboard() {
   const [bookings, setBookings] = useState([])
   const [technicians, setTechnicians] = useState([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
+  const [actionError, setActionError] = useState('')
   const [tab, setTab] = useState('overview') // overview | bookings | technicians
   const [verifyingId, setVerifyingId] = useState(null)
 
-  useEffect(() => {
+  const loadDashboard = async () => {
+    setLoading(true)
+    setLoadError('')
     Promise.all([
       API.get('/bookings/').then(r => r.data || []),
-      API.get('/technicians/').then(r => r.data || []),
+      API.get('/technicians/admin/').then(r => r.data || []),
     ]).then(([b, t]) => {
       setBookings(b)
       setTechnicians(t)
-    }).catch(() => {}).finally(() => setLoading(false))
+    }).catch((err) => {
+      setLoadError(err.response?.data?.detail || err.response?.data?.error || 'Could not load admin data. Please try again.')
+    }).finally(() => setLoading(false))
+  }
+
+  useEffect(() => {
+    loadDashboard()
   }, [])
 
   const stats = {
@@ -38,18 +48,22 @@ export default function AdminDashboard() {
 
   const handleVerify = async (techId, verified) => {
     setVerifyingId(techId)
+    setActionError('')
     try {
       await API.put(`/technicians/${techId}/verify/`, { is_verified: verified })
       setTechnicians(prev => prev.map(t =>
         t._id === techId ? { ...t, is_verified: verified } : t
       ))
     } catch (err) {
-      alert(err.response?.data?.error || 'Action failed')
+      setActionError(err.response?.data?.error || 'Could not update technician verification. Please try again.')
+    } finally {
+      setVerifyingId(null)
     }
-    setVerifyingId(null)
   }
 
-  if (loading) return <LoadingSpinner text="Loading admin panel..." />
+  if (loading && bookings.length === 0 && technicians.length === 0) {
+    return <LoadingSpinner text="Loading admin panel..." />
+  }
 
   return (
     <div className="relative">
@@ -64,6 +78,13 @@ export default function AdminDashboard() {
             Manage bookings, technicians, and platform overview
           </p>
         </div>
+
+        {loadError && (
+          <div className="glass-card-static p-4 mb-6 flex items-center justify-between gap-4">
+            <p className="text-sm text-red-400">{loadError}</p>
+            <button onClick={loadDashboard} className="btn-primary btn-sm">Retry</button>
+          </div>
+        )}
 
         {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
@@ -99,6 +120,10 @@ export default function AdminDashboard() {
             </button>
           ))}
         </div>
+
+        {actionError && (
+          <p role="alert" className="text-sm text-red-400 mb-4">{actionError}</p>
+        )}
 
         {/* Bookings Tab */}
         {tab === 'overview' && (
@@ -158,14 +183,20 @@ export default function AdminDashboard() {
                 </div>
                 <div className="flex items-center gap-2">
                   {tech.is_verified ? (
-                    <span className="badge-green badge text-xs"><ShieldCheck size={12} /> Verified</span>
+                    <button
+                      onClick={() => handleVerify(tech._id, false)}
+                      disabled={verifyingId === tech._id}
+                      className="badge-green badge text-xs disabled:opacity-50"
+                    >
+                      {verifyingId === tech._id ? 'Updating...' : <><ShieldCheck size={12} /> Verified · Revoke</>}
+                    </button>
                   ) : (
                     <button
                       onClick={() => handleVerify(tech._id, true)}
                       disabled={verifyingId === tech._id}
                       className="btn-primary btn-sm text-xs flex items-center gap-1"
                     >
-                      {verifyingId === tech._id ? '...' : <><ShieldCheck size={12} /> Verify</>}
+                      {verifyingId === tech._id ? 'Updating...' : <><ShieldCheck size={12} /> Verify</>}
                     </button>
                   )}
                 </div>

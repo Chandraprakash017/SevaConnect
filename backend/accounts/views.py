@@ -129,11 +129,9 @@ def register(request):
     }, status=status.HTTP_201_CREATED)
 
 
-@api_view(['POST'])
-@permission_classes([AllowAny])
-def login(request):
+def _login(request, admin_only=False):
     """
-    Login with email and password. Returns JWT tokens.
+    Authenticate a user and return JWT tokens.
     
     Expected request body:
     {
@@ -179,6 +177,12 @@ def login(request):
             status=status.HTTP_401_UNAUTHORIZED
         )
 
+    if admin_only and user.get('role') != 'admin':
+        return Response(
+            {"error": "Administrator access only."},
+            status=status.HTTP_403_FORBIDDEN
+        )
+
     # Generate fresh JWT tokens
     tokens = generate_tokens_for_user(user['_id'], user['role'])
 
@@ -193,6 +197,20 @@ def login(request):
         },
         "tokens": tokens
     }, status=status.HTTP_200_OK)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def login(request):
+    """Login with email and password. Returns JWT tokens."""
+    return _login(request)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def admin_login(request):
+    """Login for provisioned administrator accounts only."""
+    return _login(request, admin_only=True)
 
 
 @api_view(['GET'])

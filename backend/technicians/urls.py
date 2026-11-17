@@ -6,6 +6,9 @@ urlpatterns = [
     path('technicians/me/', views.get_my_profile, name='technician_my_profile'),
     path('technicians/me/update/', views.update_my_profile, name='technician_update_profile'),
 
+    # Admin: review every technician, including pending profiles
+    path('technicians/admin/', views.list_all_technicians, name='admin_list_technicians'),
+
     # Public listing
     path('technicians/', views.list_technicians, name='list_technicians'),
     path('technicians/<str:tech_id>/', views.get_technician, name='get_technician'),

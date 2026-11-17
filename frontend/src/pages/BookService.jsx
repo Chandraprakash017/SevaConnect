@@ -10,7 +10,7 @@ import API from '../api/axios'
 import LoadingSpinner from '../components/LoadingSpinner'
 import {
   ArrowRight, ArrowLeft, MapPin, Calendar, Clock, FileText,
-  CheckCircle, IndianRupee, AlertCircle, Sparkles
+  CheckCircle, IndianRupee, AlertCircle, Sparkles, LocateFixed
 } from 'lucide-react'
 
 export default function BookService() {
@@ -29,7 +29,9 @@ export default function BookService() {
     landmark: '',
     scheduled_date: '',
     scheduled_time: '',
+    location: null,
   })
+  const [locating, setLocating] = useState(false)
 
   useEffect(() => {
     API.get(`/services/${serviceId}/`)
@@ -39,6 +41,39 @@ export default function BookService() {
   }, [serviceId])
 
   const update = (key, val) => setForm({ ...form, [key]: val })
+
+  const useCurrentLocation = () => {
+    setError('')
+    if (!navigator.geolocation) {
+      setError('Location sharing is not supported by this browser.')
+      return
+    }
+
+    setLocating(true)
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => {
+        setForm((current) => ({
+          ...current,
+          location: {
+            latitude: coords.latitude,
+            longitude: coords.longitude,
+            accuracy_m: coords.accuracy,
+          },
+        }))
+        setLocating(false)
+      },
+      (locationError) => {
+        const message = locationError.code === locationError.PERMISSION_DENIED
+          ? 'Location permission was denied. Allow location access in your browser settings and try again.'
+          : locationError.code === locationError.TIMEOUT
+            ? 'Could not get your location in time. Move to an area with a clearer GPS signal and try again.'
+            : 'Could not get your current location. Check your device location settings and try again.'
+        setError(message)
+        setLocating(false)
+      },
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
+    )
+  }
 
   const handleSubmit = async () => {
     setError('')
@@ -176,6 +211,29 @@ export default function BookService() {
               </div>
             </div>
 
+            <div className="mb-6 rounded-xl border border-blue-400/20 bg-blue-500/5 p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-medium text-white">Pin your roadside location</p>
+                  <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                    Share GPS once so the technician can find you and you can follow their live route and arrival estimate.
+                  </p>
+                  {form.location && (
+                    <p className="mt-2 text-xs text-emerald-300">
+                      Location captured (±{Math.round(form.location.accuracy_m)} m)
+                    </p>
+                  )}
+                </div>
+                <button type="button" onClick={useCurrentLocation} disabled={locating} className="btn-secondary btn-sm flex shrink-0 items-center justify-center gap-2">
+                  <LocateFixed size={14} />
+                  {locating ? 'Getting location…' : form.location ? 'Update location' : 'Use my location'}
+                </button>
+              </div>
+              <p className="mt-3 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                Optional. GPS sharing requires browser permission and a secure connection (HTTPS).
+              </p>
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
               <div>
                 <label className="label flex items-center gap-1.5"><Calendar size={14} className="text-blue-400" /> Preferred Date</label>
@@ -238,6 +296,12 @@ export default function BookService() {
                 <span style={{ color: 'var(--text-muted)' }}>Address</span>
                 <span className="text-white text-right">{form.address}, {form.city} {form.pincode}</span>
               </div>
+              {form.location && (
+                <div className="flex justify-between text-sm">
+                  <span style={{ color: 'var(--text-muted)' }}>GPS pin</span>
+                  <span className="text-right text-emerald-300">Included for live tracking</span>
+                </div>
+              )}
               <div className="flex justify-between text-sm">
                 <span style={{ color: 'var(--text-muted)' }}>When</span>
                 <span className="text-white">{form.scheduled_date} at {form.scheduled_time}</span>

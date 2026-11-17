@@ -7,7 +7,7 @@ import { useAuth } from '../context/AuthContext'
 import API from '../api/axios'
 import { Mail, Lock, LogIn, Eye, EyeOff, AlertCircle } from 'lucide-react'
 
-export default function Login() {
+export default function Login({ adminOnly = false }) {
   const { login } = useAuth()
   const navigate = useNavigate()
   const [form, setForm] = useState({ email: '', password: '' })
@@ -21,7 +21,7 @@ export default function Login() {
     setLoading(true)
 
     try {
-      const res = await API.post('/auth/login/', form)
+      const res = await API.post(adminOnly ? '/auth/admin-login/' : '/auth/login/', form)
       login(res.data.user, res.data.tokens)
 
       // Navigate to the right dashboard based on role
@@ -45,8 +45,12 @@ export default function Login() {
       <div className="w-full max-w-md relative animate-slide-up">
         {/* Header */}
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-white mb-2">Welcome Back</h1>
-          <p style={{ color: 'var(--text-muted)' }} className="text-sm">Sign in to continue to SevaConnect</p>
+          <h1 className="text-3xl font-bold text-white mb-2">
+            {adminOnly ? 'Administrator Sign In' : 'Welcome Back'}
+          </h1>
+          <p style={{ color: 'var(--text-muted)' }} className="text-sm">
+            {adminOnly ? 'Sign in to manage SevaConnect' : 'Sign in to continue to SevaConnect'}
+          </p>
         </div>
 
         {/* Form */}
@@ -112,12 +116,29 @@ export default function Login() {
             </button>
           </form>
 
-          <p className="text-center text-sm mt-6" style={{ color: 'var(--text-muted)' }}>
-            Don't have an account?{' '}
-            <Link to="/register" className="text-blue-400 hover:text-blue-300 font-medium">
-              Create one
-            </Link>
-          </p>
+          {adminOnly ? (
+            <p className="text-center text-sm mt-6" style={{ color: 'var(--text-muted)' }}>
+              Are you a customer or technician?{' '}
+              <Link to="/login" className="text-blue-400 hover:text-blue-300 font-medium">
+                Use regular sign in
+              </Link>
+            </p>
+          ) : (
+            <>
+              <p className="text-center text-sm mt-6" style={{ color: 'var(--text-muted)' }}>
+                Don't have an account?{' '}
+                <Link to="/register" className="text-blue-400 hover:text-blue-300 font-medium">
+                  Create one
+                </Link>
+              </p>
+              <p className="text-center text-xs mt-4" style={{ color: 'var(--text-muted)' }}>
+                Administrator?{' '}
+                <Link to="/admin/login" className="text-blue-400 hover:text-blue-300 font-medium">
+                  Sign in here
+                </Link>
+              </p>
+            </>
+          )}
         </div>
       </div>
     </div>

@@ -2,7 +2,7 @@
  * TechJobDetail — Technician's view of a specific job.
  * Actions: update status, submit quote (after inspection).
  */
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import API from '../api/axios'
 import LoadingSpinner from '../components/LoadingSpinner'
@@ -10,7 +10,7 @@ import StatusBadge from '../components/StatusBadge'
 import {
   ArrowLeft, MapPin, Calendar, Clock, Phone, User, MessageSquare,
   Truck, Search, FileText, Wrench, CheckCircle, IndianRupee, Plus, Trash2,
-  AlertCircle, Send
+  AlertCircle, Send, LocateFixed, Radio
 } from 'lucide-react'
 
 const TECH_ACTIONS = {
@@ -26,6 +26,14 @@ export default function TechJobDetail() {
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState(false)
   const [error, setError] = useState('')
+  const [trackingActive, setTrackingActive] = useState(false)
+  const [trackingStopping, setTrackingStopping] = useState(false)
+  const [trackingError, setTrackingError] = useState('')
+  const [lastLocationAt, setLastLocationAt] = useState(null)
+  const locationWatchId = useRef(null)
+  const lastLocationAttemptAt = useRef(0)
+  const locationUpdateInFlight = useRef(false)
+  const locationUpdatePromise = useRef(Promise.resolve())
 
   // Quote form (used during inspection)
   const [quoteForm, setQuoteForm] = useState({
@@ -51,6 +59,86 @@ export default function TechJobDetail() {
   }
 
   useEffect(() => { fetchBooking() }, [id])
+
+  useEffect(() => {
+    if (booking?.status !== 'on_way' && locationWatchId.current !== null) {
+      navigator.geolocation?.clearWatch(locationWatchId.current)
+      locationWatchId.current = null
+      setTrackingActive(false)
+    }
+
+    return () => {
+      if (locationWatchId.current !== null) {
+        navigator.geolocation?.clearWatch(locationWatchId.current)
+        locationWatchId.current = null
+      }
+    }
+  }, [booking?.status])
+
+  const stopLocationSharing = async () => {
+    if (locationWatchId.current !== null) {
+      navigator.geolocation?.clearWatch(locationWatchId.current)
+      locationWatchId.current = null
+    }
+    setTrackingActive(false)
+    setTrackingError('')
+    setTrackingStopping(true)
+    try {
+      await locationUpdatePromise.current
+      await API.post(`/bookings/${id}/tracking/stop/`)
+    } catch (err) {
+      setTrackingError(err.response?.data?.error || 'Could not stop sharing location. Please try again.')
+    } finally {
+      setTrackingStopping(false)
+    }
+  }
+
+  const startLocationSharing = () => {
+    setTrackingError('')
+    if (!navigator.geolocation) {
+      setTrackingError('Live location is not supported by this browser.')
+      return
+    }
+
+    setTrackingActive(true)
+    locationWatchId.current = navigator.geolocation.watchPosition(
+      async ({ coords }) => {
+        const now = Date.now()
+        if (locationUpdateInFlight.current || now - lastLocationAttemptAt.current < 10000) return
+        lastLocationAttemptAt.current = now
+        locationUpdateInFlight.current = true
+
+        locationUpdatePromise.current = API.post(`/bookings/${id}/location/`, {
+          latitude: coords.latitude,
+          longitude: coords.longitude,
+          accuracy_m: coords.accuracy,
+        })
+          .then(() => {
+            setLastLocationAt(new Date())
+            setTrackingError('')
+          })
+          .catch((err) => {
+            setTrackingError(err.response?.data?.error || 'Location update failed. Check your connection and try again.')
+          })
+          .finally(() => { locationUpdateInFlight.current = false })
+        await locationUpdatePromise.current
+      },
+      (locationError) => {
+        const message = locationError.code === locationError.PERMISSION_DENIED
+          ? 'Location permission was denied. Allow location access in your browser settings to share your route.'
+          : locationError.code === locationError.TIMEOUT
+            ? 'Could not get a GPS fix in time. Move to an area with a clearer signal and try again.'
+            : 'Could not read your GPS location. Check your device location settings.'
+        setTrackingError(message)
+        setTrackingActive(false)
+        if (locationWatchId.current !== null) {
+          navigator.geolocation.clearWatch(locationWatchId.current)
+          locationWatchId.current = null
+        }
+      },
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
+    )
+  }
 
   const handleStatusUpdate = async (newStatus) => {
     setActionLoading(true)
@@ -171,6 +259,48 @@ export default function TechJobDetail() {
             </div>
           </div>
         </div>
+
+        {booking.status === 'on_way' && (
+          <div className="glass-card-static mb-6 p-6">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h3 className="flex items-center gap-2 font-semibold text-white">
+                  <Radio size={16} className={trackingActive ? 'text-emerald-400' : 'text-blue-400'} />
+                  Live location sharing
+                </h3>
+                <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
+                  {trackingActive
+                    ? lastLocationAt
+                      ? `Sharing your GPS location. Last update ${lastLocationAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`
+                      : 'Waiting for a GPS fix… Keep this page open while travelling.'
+                    : 'Share your live GPS location so the customer can follow your route and arrival estimate.'}
+                </p>
+              </div>
+              {trackingStopping ? (
+                <button disabled className="btn-secondary btn-sm flex shrink-0 items-center justify-center gap-2">
+                  Stopping…
+                </button>
+              ) : trackingActive ? (
+                <button onClick={stopLocationSharing} className="btn-secondary btn-sm flex shrink-0 items-center justify-center gap-2">
+                  Stop sharing
+                </button>
+              ) : (
+                <button onClick={startLocationSharing} className="btn-primary btn-sm flex shrink-0 items-center justify-center gap-2">
+                  <LocateFixed size={14} /> Start live location
+                </button>
+              )}
+            </div>
+            <p className="mt-3 text-xs" style={{ color: 'var(--text-muted)' }}>
+              Location sharing needs browser permission, a secure HTTPS connection, and this page open. Updates are sent about every 10 seconds.
+            </p>
+            {trackingError && (
+              <div className="mt-3 flex items-start gap-2 rounded-lg border border-red-500/20 bg-red-500/10 p-3">
+                <AlertCircle size={15} className="mt-0.5 shrink-0 text-red-400" />
+                <p className="text-sm text-red-300">{trackingError}</p>
+              </div>
+            )}
+          </div>
+        )}
 
         {error && (
           <div className="flex items-center gap-2 p-3 rounded-xl bg-red-500/10 border border-red-500/20 mb-6">

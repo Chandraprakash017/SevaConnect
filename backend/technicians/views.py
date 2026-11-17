@@ -131,6 +131,27 @@ def list_technicians(request):
 
 
 @api_view(['GET'])
+@permission_classes([IsAuthenticated, IsAdmin])
+def list_all_technicians(request):
+    """Admin: list all technicians, including profiles awaiting verification."""
+    technicians = list(db.technicians.find({}).sort("created_at", -1))
+    result = []
+    for tech in technicians:
+        user_data = db.users.find_one({"_id": tech.get("user_id")})
+        tech_data = serialize_doc(tech)
+        if user_data:
+            tech_data.update({
+                "name": user_data.get("name", ""),
+                "email": user_data.get("email", ""),
+                "phone": user_data.get("phone", ""),
+                "user_is_active": user_data.get("is_active", True),
+            })
+        result.append(tech_data)
+
+    return Response(result)
+
+
+@api_view(['GET'])
 @permission_classes([AllowAny])
 def get_technician(request, tech_id):
     """
@@ -157,9 +178,19 @@ def verify_technician(request, tech_id):
     Body: {"is_verified": true}
     """
     is_verified = request.data.get('is_verified', True)
+    if not isinstance(is_verified, bool):
+        return Response(
+            {"error": "'is_verified' must be a boolean."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    technician_oid = str_to_objectid(tech_id)
+    if technician_oid is None:
+        return Response({"error": "Invalid technician ID."}, status=status.HTTP_400_BAD_REQUEST)
+
     result = db.technicians.update_one(
-        {"_id": str_to_objectid(tech_id)},
-        {"$set": {"is_verified": bool(is_verified)}}
+        {"_id": technician_oid},
+        {"$set": {"is_verified": is_verified}}
     )
 
     if result.matched_count == 0:

@@ -100,6 +100,9 @@ export default function Navbar() {
               </div>
             ) : (
               <div className="flex items-center gap-3">
+                <Link to="/admin/login" className="text-sm text-slate-500 hover:text-white transition-colors duration-300 font-medium">
+                  Admin
+                </Link>
                 <Link to="/login" className="text-sm text-slate-400 hover:text-white transition-colors duration-300 font-medium">
                   Login
                 </Link>
@@ -128,6 +131,7 @@ export default function Navbar() {
               </>
             ) : (
               <>
+                <Link to="/admin/login" className="block text-sm text-slate-400 hover:text-white py-2">Administrator sign in</Link>
                 <Link to="/login" className="block text-sm text-slate-300 hover:text-white py-2">Login</Link>
                 <Link to="/register" className="btn-primary btn-sm inline-block mt-2">Get Started</Link>
               </>

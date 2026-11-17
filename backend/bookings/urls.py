@@ -12,6 +12,8 @@ urlpatterns = [
     # Specific booking actions
     path('bookings/<str:booking_id>/', views.get_booking, name='get_booking'),
     path('bookings/<str:booking_id>/status/', views.update_status, name='update_status'),
+    path('bookings/<str:booking_id>/location/', views.update_technician_location, name='update_technician_location'),
+    path('bookings/<str:booking_id>/tracking/stop/', views.stop_technician_location, name='stop_technician_location'),
     path('bookings/<str:booking_id>/accept/', views.accept_job, name='accept_job'),
     path('bookings/<str:booking_id>/reject/', views.reject_job, name='reject_job'),
     path('bookings/<str:booking_id>/quote/', views.submit_quote, name='submit_quote'),

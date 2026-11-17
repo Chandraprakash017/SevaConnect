@@ -12,7 +12,8 @@ Who can do what:
   Admin       : assign technician, cancel any booking
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
+import math
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -27,6 +28,14 @@ BOOKING_STATUSES = (
     'requested', 'assigned', 'on_way', 'inspection',
     'waiting_approval', 'in_progress', 'completed', 'cancelled'
 )
+LOCATION_UPDATE_MIN_INTERVAL = timedelta(seconds=8)
+
+
+def _is_finite_number(value):
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def _add_status_history(booking_id, new_status, note=""):
@@ -43,6 +52,34 @@ def _add_status_history(booking_id, new_status, note=""):
         {"_id": str_to_objectid(booking_id)},
         {"$push": {"status_history": history_entry}}
     )
+
+
+def _parse_location(data):
+    """Validate a GPS location supplied by a customer or technician."""
+    if not isinstance(data, dict):
+        return None, "Location must contain latitude and longitude."
+
+    latitude = data.get("latitude")
+    longitude = data.get("longitude")
+    if (
+        isinstance(latitude, bool) or not isinstance(latitude, (int, float))
+        or isinstance(longitude, bool) or not isinstance(longitude, (int, float))
+        or not _is_finite_number(latitude) or not _is_finite_number(longitude)
+        or not -90 <= latitude <= 90 or not -180 <= longitude <= 180
+    ):
+        return None, "Latitude or longitude is invalid."
+
+    location = {"latitude": latitude, "longitude": longitude}
+    accuracy = data.get("accuracy_m")
+    if accuracy is not None:
+        if (
+            isinstance(accuracy, bool) or not isinstance(accuracy, (int, float))
+            or not _is_finite_number(accuracy) or not 0 <= accuracy <= 10000
+        ):
+            return None, "Location accuracy must be between 0 and 10000 meters."
+        location["accuracy_m"] = accuracy
+
+    return location, None
 
 
 def _create_invoice(booking):
@@ -139,6 +176,12 @@ def create_booking(request):
         if ai_session:
             ai_diagnosis = ai_session.get('final_diagnosis') or ai_session.get('initial_diagnosis', {}).get('initial_diagnosis')
 
+    service_location = None
+    if data.get("location") is not None:
+        service_location, location_error = _parse_location(data["location"])
+        if location_error:
+            return Response({"error": location_error}, status=status.HTTP_400_BAD_REQUEST)
+
     new_booking = {
         "customer_id": str_to_objectid(user.id),
         "service_id": service_oid,
@@ -152,6 +195,7 @@ def create_booking(request):
         "city": data['city'].strip(),
         "pincode": data['pincode'].strip(),
         "landmark": data.get('landmark', '').strip(),
+        "service_location": service_location,
 
         # Schedule
         "scheduled_date": data['scheduled_date'],
@@ -236,6 +280,8 @@ def list_available_jobs(request):
         query['pincode'] = pincode
 
     jobs = list(db.bookings.find(query).sort("created_at", -1))
+    for job in jobs:
+        job.pop("service_location", None)
     return Response(serialize_list(jobs))
 
 
@@ -255,12 +301,99 @@ def get_booking(request, booking_id):
 
     if user.role == 'technician':
         tech = db.technicians.find_one({"user_id": str_to_objectid(user.id)})
+        is_unassigned_job = booking.get('status') == 'requested' and booking.get('technician_id') is None
         if not tech or str(booking.get('technician_id')) != str(tech['_id']):
             # Technician can also view unassigned jobs before accepting
-            if booking.get('status') != 'requested' or booking.get('technician_id') is not None:
+            if not is_unassigned_job:
                 return Response({"error": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
+            booking = {key: value for key, value in booking.items() if key != "service_location"}
 
     return Response(serialize_doc(booking))
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated, IsTechnician])
+def update_technician_location(request, booking_id):
+    """Technician: Share the current GPS location while travelling to a job."""
+    booking_oid = str_to_objectid(booking_id)
+    if not booking_oid:
+        return Response({"error": "Invalid booking ID."}, status=status.HTTP_400_BAD_REQUEST)
+
+    location, location_error = _parse_location(request.data)
+    if location_error:
+        return Response({"error": location_error}, status=status.HTTP_400_BAD_REQUEST)
+
+    user = request.user
+    tech = db.technicians.find_one({"user_id": str_to_objectid(user.id)})
+    if not tech:
+        return Response({"error": "Technician profile not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    booking = db.bookings.find_one({"_id": booking_oid})
+    if not booking:
+        return Response({"error": "Booking not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    if str(booking.get("technician_id")) != str(tech["_id"]):
+        return Response({"error": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
+
+    if booking.get("status") != "on_way":
+        return Response(
+            {"error": "Live location can only be shared while the booking is on the way."},
+            status=status.HTTP_409_CONFLICT,
+        )
+
+    now = datetime.utcnow()
+    location["updated_at"] = now
+    result = db.bookings.update_one(
+        {
+            "_id": booking_oid,
+            "technician_id": tech["_id"],
+            "status": "on_way",
+            "$or": [
+                {"technician_location.updated_at": {"$lte": now - LOCATION_UPDATE_MIN_INTERVAL}},
+                {"technician_location.updated_at": {"$exists": False}},
+            ],
+        },
+        {"$set": {"technician_location": location, "updated_at": now}},
+    )
+    if result.matched_count == 0:
+        latest_booking = db.bookings.find_one({"_id": booking_oid})
+        if (
+            latest_booking
+            and latest_booking.get("status") == "on_way"
+            and latest_booking.get("technician_id") == tech["_id"]
+        ):
+            return Response(
+                {"error": "Location updates are limited to one every 8 seconds."},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+        return Response(
+            {"error": "Live tracking is no longer active for this booking."},
+            status=status.HTTP_409_CONFLICT,
+        )
+
+    return Response({"technician_location": serialize_doc(location)})
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated, IsTechnician])
+def stop_technician_location(request, booking_id):
+    """Technician: Stop sharing the current location for a booking."""
+    booking_oid = str_to_objectid(booking_id)
+    if not booking_oid:
+        return Response({"error": "Invalid booking ID."}, status=status.HTTP_400_BAD_REQUEST)
+
+    tech = db.technicians.find_one({"user_id": str_to_objectid(request.user.id)})
+    if not tech:
+        return Response({"error": "Technician profile not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    result = db.bookings.update_one(
+        {"_id": booking_oid, "technician_id": tech["_id"]},
+        {"$unset": {"technician_location": ""}, "$set": {"updated_at": datetime.utcnow()}},
+    )
+    if result.matched_count == 0:
+        return Response({"error": "Booking not found or access denied."}, status=status.HTTP_404_NOT_FOUND)
+
+    return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 @api_view(['POST'])
@@ -324,7 +457,7 @@ def reject_job(request, booking_id):
             "technician_id": None,
             "status": "requested",
             "updated_at": datetime.utcnow(),
-        }}
+        }, "$unset": {"technician_location": ""}}
     )
     _add_status_history(booking_id, "requested", "Technician rejected. Looking for another technician.")
 
@@ -393,10 +526,10 @@ def update_status(request, booking_id):
     elif user.role != 'admin':
         return Response({"error": "Unauthorized."}, status=status.HTTP_403_FORBIDDEN)
 
-    db.bookings.update_one(
-        {"_id": str_to_objectid(booking_id)},
-        {"$set": {"status": new_status, "updated_at": datetime.utcnow()}}
-    )
+    update = {"$set": {"status": new_status, "updated_at": datetime.utcnow()}}
+    if new_status != "on_way":
+        update["$unset"] = {"technician_location": ""}
+    db.bookings.update_one({"_id": str_to_objectid(booking_id)}, update)
     _add_status_history(booking_id, new_status, note)
 
     # If job is completed, generate invoice automatically
@@ -493,7 +626,7 @@ def assign_technician(request, booking_id):
             "technician_id": tech['_id'],
             "status": "assigned",
             "updated_at": datetime.utcnow(),
-        }}
+        }, "$unset": {"technician_location": ""}}
     )
 
     if result.matched_count == 0:
